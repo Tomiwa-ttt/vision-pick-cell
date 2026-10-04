@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+</head>
+<body style="margin:0">
+<title>Vision Pick Cell</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: the 3D work cell fills the left; a dense instrument panel (camera feed, joints, detections, log) runs down the right.
+   Single committed look: a bright machine-shop cell, graphite type, safety-orange for anything the operator can act on. */
+:root{
+  --bg:#e4e7e9; --panel:#f6f7f8; --raise:#ffffff; --line:#d0d5d9; --fg:#14181b; --muted:#5b646b;
+  --accent:#ff5a1f; --accent-ink:#ffffff; --ok:#1d7f47; --bad:#c22f2f;
+  --display:"Archivo","Helvetica Neue",Arial,sans-serif;
+  --body:"Archivo","Helvetica Neue",Arial,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:14px;line-height:1.45}
+*{box-sizing:border-box}
+.app{display:grid;grid-template-columns:minmax(0,1fr) 400px;height:100%}
+.view{position:relative;min-width:0;min-height:0;overflow:hidden;background:linear-gradient(#eef0f2,#d9dde0)}
+.view canvas{display:block;width:100%;height:100%;touch-action:none}
+.hud{position:absolute;left:16px;top:16px;display:flex;flex-direction:column;gap:6px;pointer-events:none;max-width:calc(100% - 32px)}
+.hud h1{margin:0;font:800 30px/0.95 var(--display);font-stretch:112%;letter-spacing:-.01em;text-transform:uppercase}
+.hud p{margin:0;color:var(--muted);font-size:13px}
+.state{position:absolute;left:16px;bottom:16px;display:flex;gap:8px;align-items:center;background:rgba(255,255,255,.86);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:500 12px var(--mono);max-width:calc(100% - 32px)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
+.dot.busy{background:var(--accent)} .dot.ok{background:var(--ok)}
+.panel{background:var(--panel);border-left:1px solid var(--line);overflow-y:auto;padding:18px 18px 32px;display:flex;flex-direction:column;gap:18px;min-width:0}
+.sec{display:flex;flex-direction:column;gap:10px}
+.sec h2{margin:0;font:600 11px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);display:flex;justify-content:space-between;gap:8px;border-bottom:1px solid var(--line);padding-bottom:6px}
+.sec h2 span{letter-spacing:.04em;text-transform:none;color:var(--fg)}
+.feed{position:relative;border-radius:6px;overflow:hidden;background:#1a1d20;aspect-ratio:1/1;max-width:100%}
+.feed canvas{display:block;width:100%;height:100%;cursor:crosshair}
+.feed .tag{position:absolute;left:8px;top:8px;font:500 11px var(--mono);color:#fff;background:rgba(0,0,0,.55);padding:2px 6px;border-radius:3px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat{background:var(--raise);border:1px solid var(--line);border-radius:6px;padding:8px 10px;min-width:0}
+.stat b{display:block;font:600 18px var(--mono);font-variant-numeric:tabular-nums}
+.stat small{color:var(--muted);font-size:11px}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+button.btn{appearance:none;border:1px solid var(--line);background:var(--raise);color:var(--fg);font:600 13px var(--body);padding:9px 10px;border-radius:6px;cursor:pointer}
+button.btn:hover{border-color:var(--muted)}
+button.btn:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+button.primary:hover{border-color:var(--accent);filter:brightness(1.06)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+label.field{display:flex;flex-direction:column;gap:4px;font-size:13px}
+.field .top{display:flex;justify-content:space-between;gap:8px}
+.field output{font:500 12px var(--mono);color:var(--fg)}
+input[type=range]{width:100%;accent-color:var(--accent)}
+table{width:100%;border-collapse:collapse;font:400 12px var(--mono);font-variant-numeric:tabular-nums}
+th{font-weight:500;color:var(--muted);text-align:right;padding:3px 4px;border-bottom:1px solid var(--line)}
+td{text-align:right;padding:4px 4px;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+.tw{overflow-x:auto}
+.jbar{display:grid;grid-template-columns:96px 1fr 64px;gap:8px;align-items:center;font:400 12px var(--mono)}
+.jbar .track{height:6px;background:var(--line);border-radius:3px;position:relative}
+.jbar .track i{position:absolute;top:-2px;width:3px;height:10px;background:var(--fg);border-radius:1px;left:50%}
+.jbar .track:after{content:"";position:absolute;left:50%;top:-1px;width:1px;height:8px;background:var(--muted)}
+.jbar span:last-child{text-align:right}
+.sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:0}
+.log{margin:0;padding:0;list-style:none;font:400 12px var(--mono);display:flex;flex-direction:column;gap:3px}
+.log li{display:grid;grid-template-columns:52px 1fr;gap:8px}
+.log time{color:var(--muted)}
+.log .bad{color:var(--bad)} .log .ok{color:var(--ok)}
+details{font-size:13px}
+summary{cursor:pointer;font-weight:600}
+details ol{margin:8px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:4px;color:var(--fg)}
+.hint{color:var(--muted);font-size:12px;margin:0}
+@media (max-width:900px){
+  html,body{height:auto}
+  .app{grid-template-columns:1fr;height:auto}
+  .view{height:62vh;min-height:360px}
+  .panel{border-left:0;border-top:1px solid var(--line);padding:18px 16px 32px;overflow:visible}
+  .hud h1{font-size:24px}
+}
+</style>
+
+<div class="app">
+  <div class="view" id="view">
+    <div class="hud">
+      <h1>Vision Pick Cell</h1>
+      <p>Click any object on the table. The overhead camera locates it and the arm picks it from that estimate.</p>
+    </div>
+    <div class="state"><span class="dot" id="dot"></span><span id="stateText">Ready</span></div>
+  </div>
+
+  <aside class="panel">
+    <section class="sec">
+      <h2>Overhead camera <span id="detCount">0 detected</span></h2>
+      <div class="feed"><canvas id="feed" width="384" height="384" aria-label="Overhead camera feed with detections"></canvas><span class="tag" id="feedTag">CAM 1 · 256 × 256 px · 2.3 mm/px</span></div>
+      <div class="stats">
+        <div class="stat"><b id="sPicks">0 / 0</b><small>Picks placed</small></div>
+        <div class="stat"><b id="sErr">-</b><small>Mean locate error</small></div>
+        <div class="stat"><b id="sCycle">-</b><small>Last cycle</small></div>
+      </div>
+    </section>
+
+    <section class="sec">
+      <h2>Run</h2>
+      <div class="btns">
+        <button class="btn primary" id="bAuto">Sort everything</button>
+        <button class="btn" id="bStop" disabled>Stop after this pick</button>
+        <button class="btn" id="bScan">Rescan</button>
+        <button class="btn" id="bScatter">New layout</button>
+      </div>
+      <label class="field"><span class="top"><span>Arm speed</span><output id="oSpeed">1.0×</output></span><input type="range" id="speed" min="0.5" max="3" step="0.1" value="1"></label>
+      <label class="field"><span class="top"><span>Camera noise σ</span><output id="oNoise">8</output></span><input type="range" id="noise" min="0" max="60" step="1" value="8"></label>
+      <p class="hint">Raise the noise to watch localisation error grow until grasps start to miss.</p>
+    </section>
+
+    <section class="sec">
+      <h2>Joints <span id="tool">tool 0, 0, 0 mm</span></h2>
+      <div id="joints" style="display:flex;flex-direction:column;gap:6px"></div>
+    </section>
+
+    <section class="sec">
+      <h2>Detections <span>robot frame, mm</span></h2>
+      <div class="tw"><table><thead><tr><th>#</th><th>Class</th><th>X</th><th>Y</th><th>Yaw</th><th>Conf</th><th>Err</th></tr></thead><tbody id="dets"></tbody></table></div>
+      <p class="hint">Err compares each estimate with the simulator's ground truth. The arm never sees ground truth.</p>
+    </section>
+
+    <section class="sec">
+      <h2>Event log</h2>
+      <ul class="log" id="log"></ul>
+    </section>
+
+    <section class="sec">
+      <details>
+        <summary>How the pipeline works</summary>
+        <ol>
+          <li>An orthographic camera 1.5 m above the table renders a 256 × 256 image.</li>
+          <li>Each pixel is converted to HSV. Saturated pixels are classed as red, yellow, green or blue.</li>
+          <li>Connected-component labelling groups pixels into blobs and drops anything under 60 px.</li>
+          <li>Blob centroid gives position. Fill ratio against the enclosing circle separates boxes from round parts, and brightness spread separates spheres from cylinders. The farthest corner gives box yaw.</li>
+          <li>Closed-form inverse kinematics turns the estimate into five joint angles, with the gripper held vertical and rolled to the box faces.</li>
+          <li>The grasp only holds if the estimate is within 16 mm (and 15° for boxes) of the real part.</li>
+        </ol>
+      </details>
+    </section>
+  </aside>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(function(){
+"use strict";
+const $=id=>document.getElementById(id);
+const PI=Math.PI, V3=THREE.Vector3;
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const ease=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+const wrapPi=a=>Math.atan2(Math.sin(a),Math.cos(a));
+const wrapQ=a=>{a=((a+PI/4)%(PI/2)+PI/2)%(PI/2)-PI/4;return a}; // into [-45°,45°)
+const deg=r=>r*180/PI;
+
+/* ---------------- scene ---------------- */
+const view=$('view');
+const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
+renderer.setClearColor(0x000000,0);
+renderer.setPixelRatio(Math.min(2,window.devicePixelRatio||1));
+renderer.outputEncoding=THREE.sRGBEncoding;
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+view.prepend(renderer.domElement);
+const scene=new THREE.Scene();
+scene.background=null;
+const cam=new THREE.PerspectiveCamera(40,1,0.01,20);
+cam.position.set(1.05,0.85,0.95); cam.layers.enable(1);
+const controls=new THREE.OrbitControls(cam,renderer.domElement);
+controls.target.set(0.12,0.08,0); controls.enableDamping=true; controls.maxPolarAngle=PI*0.48; controls.minDistance=0.5; controls.maxDistance=3;
+
+scene.add(new THREE.HemisphereLight(0xffffff,0x8a9096,0.42));
+const sun=new THREE.DirectionalLight(0xffffff,0.62);
+sun.position.set(0.6,1.6,0.9); sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
+Object.assign(sun.shadow.camera,{left:-0.9,right:0.9,top:0.9,bottom:-0.9,near:0.2,far:4}); sun.shadow.bias=-0.0005;
+scene.add(sun);
+
+const std=(c,o={})=>new THREE.MeshStandardMaterial(Object.assign({color:c,roughness:.6,metalness:.05},o));
+// table
+const table=new THREE.Mesh(new THREE.BoxGeometry(1.7,0.04,1.3),std(0xc3c7ca,{roughness:.85}));
+table.position.set(0.05,-0.02,0); table.receiveShadow=true; scene.add(table);
+const grid=new THREE.GridHelper(1.6,32,0x9ba2a7,0xadb3b7); grid.position.set(0.05,0.0005,0); grid.material.transparent=true; grid.material.opacity=.45; scene.add(grid);
+
+/* layer-1 helpers (visible to the operator, invisible to the vision camera) */
+function onLayer1(o){o.traverse(c=>c.layers.set(1));return o}
+const reach=new THREE.Mesh(new THREE.RingGeometry(0.535,0.54,96),new THREE.MeshBasicMaterial({color:0xff5a1f,transparent:true,opacity:.55}));
+reach.rotation.x=-PI/2; reach.position.y=0.001; scene.add(onLayer1(reach));
+const roiLine=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([new V3(0.03,0.002,-0.3),new V3(0.63,0.002,-0.3),new V3(0.63,0.002,0.3),new V3(0.03,0.002,0.3)]),new THREE.LineDashedMaterial({color:0x2b2f33,dashSize:0.02,gapSize:0.012}));
+roiLine.computeLineDistances(); scene.add(onLayer1(roiLine));
+// camera body + frustum
+const camBody=new THREE.Mesh(new THREE.BoxGeometry(0.07,0.04,0.05),std(0x2b2f33));camBody.position.set(0.33,1.5,0);scene.add(onLayer1(camBody));
+const fr=[];[[0.03,-0.3],[0.63,-0.3],[0.63,0.3],[0.03,0.3]].forEach(([x,z])=>{fr.push(new V3(0.33,1.48,0),new V3(x,0,z))});
+scene.add(onLayer1(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(fr),new THREE.LineBasicMaterial({color:0x2b2f33,transparent:true,opacity:.18}))));
+const targetRing=new THREE.Mesh(new THREE.RingGeometry(0.034,0.042,48),new THREE.MeshBasicMaterial({color:0xff5a1f}));
+targetRing.rotation.x=-PI/2; targetRing.visible=false; scene.add(onLayer1(targetRing));
+
+/* ---------------- bins ---------------- */
+const COLORS={red:0xd01f33,yellow:0xf0b800,green:0x1f9a45,blue:0x2563d9};
+const CSS={red:'#d62839',yellow:'#f2c014',green:'#2fa84f',blue:'#2e6fdc'};
+const BINS={red:new V3(-0.05,0,0.36),yellow:new V3(-0.05,0,-0.36),green:new V3(-0.3,0,0.24),blue:new V3(-0.3,0,-0.24)};
+const binCount={red:0,yellow:0,green:0,blue:0};
+Object.entries(BINS).forEach(([k,p])=>{
+  const g=new THREE.Group(), m=std(COLORS[k],{roughness:.7}), s=0.15, h=0.05, t=0.008;
+  const fl=new THREE.Mesh(new THREE.BoxGeometry(s,t,s),std(0x3a3f44)); fl.position.y=t/2; fl.receiveShadow=true; g.add(fl);
+  [[0,s/2],[0,-s/2],[s/2,0],[-s/2,0]].forEach(([x,z],i)=>{const w=new THREE.Mesh(new THREE.BoxGeometry(i<2?s:t,h,i<2?t:s),m);w.position.set(x,h/2,z);w.castShadow=true;w.receiveShadow=true;g.add(w)});
+  g.position.copy(p); g.lookAt(0,0,0); scene.add(g);
+});
+
+/* ---------------- arm ---------------- */
+const L={h0:0.12,l2:0.30,l3:0.27,l4:0.10};
+const mLink=std(0xdadde0,{roughness:.45,metalness:.15}), mJoint=std(0x2b2f33,{roughness:.5,metalness:.3}), mDark=std(0x3a3f44);
+function cyl(r,h,m,axis){const c=new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,32),m);if(axis==='z')c.rotation.x=PI/2;if(axis==='x')c.rotation.z=-PI/2;c.castShadow=true;c.receiveShadow=true;return c}
+function box(w,h,d,m){const b=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);b.castShadow=true;b.receiveShadow=true;return b}
+const ped=cyl(0.095,0.03,mDark);ped.position.y=0.015;scene.add(ped);
+const yawG=new THREE.Group(); scene.add(yawG);
+const col=cyl(0.06,L.h0-0.03,mLink);col.position.y=0.03+(L.h0-0.03)/2;yawG.add(col);
+const sh=new THREE.Group(); sh.position.y=L.h0; yawG.add(sh);
+sh.add(cyl(0.05,0.11,mJoint,'z'));
+const up=box(L.l2,0.058,0.064,mLink);up.position.x=L.l2/2;sh.add(up);
+const el=new THREE.Group(); el.position.x=L.l2; sh.add(el);
+el.add(cyl(0.04,0.095,mJoint,'z'));
+const fa=box(L.l3,0.046,0.052,mLink);fa.position.x=L.l3/2;el.add(fa);
+const wr=new THREE.Group(); wr.position.x=L.l3; el.add(wr);
+wr.add(cyl(0.032,0.07,mJoint,'z'));
+const rl=new THREE.Group(); wr.add(rl);
+const hous=cyl(0.03,0.055,mJoint,'x');hous.position.x=0.03;rl.add(hous);
+const palm=box(0.012,0.03,0.11,mDark);palm.position.x=0.062;rl.add(palm);
+const fL=box(0.05,0.022,0.01,mJoint), fR=box(0.05,0.022,0.01,mJoint);
+fL.position.x=fR.position.x=0.093; rl.add(fL); rl.add(fR);
+const tcp=new THREE.Object3D(); tcp.position.x=L.l4; rl.add(tcp);
+
+const q={yaw:PI,a1:1.35,a2:-2.25,a3:0,roll:0,grip:0.08};
+q.a3=-PI/2-q.a1-q.a2;
+const HOME=Object.assign({},q);
+function applyQ(s){yawG.rotation.y=s.yaw;sh.rotation.z=s.a1;el.rotation.z=s.a2;wr.rotation.z=s.a3;rl.rotation.x=s.roll;
+  fL.position.z=s.grip/2+0.005; fR.position.z=-s.grip/2-0.005;}
+applyQ(q);
+
+function ik(p,roll){
+  const yaw=Math.atan2(-p.z,p.x), r=Math.hypot(p.x,p.z);
+  const dx=r, dy=p.y+L.l4-L.h0;
+  const D=(dx*dx+dy*dy-L.l2*L.l2-L.l3*L.l3)/(2*L.l2*L.l3);
+  if(D>1||D<-1) return null;
+  const q2=Math.acos(D);
+  const a2=-q2, a1=Math.atan2(dy,dx)+Math.atan2(L.l3*Math.sin(q2),L.l2+L.l3*Math.cos(q2));
+  return {yaw,a1,a2,a3:-PI/2-a1-a2,roll:roll||0};
+}
+// finger axis angle in the world (same convention as rotation.y) for calibrating wrist roll
+const _a=new V3(),_b=new V3();
+function fingerAngle(){scene.updateMatrixWorld(true);fL.getWorldPosition(_a);fR.getWorldPosition(_b);return Math.atan2(-(_a.z-_b.z),_a.x-_b.x)}
+function rollFor(qq,boxYaw){
+  const save=Object.assign({},q);
+  applyQ(Object.assign({},q,qq,{roll:0})); const a0=fingerAngle();
+  applyQ(Object.assign({},q,qq,{roll:0.3})); const a1=fingerAngle();
+  applyQ(save);
+  const s=Math.sign(wrapPi(a1-a0))||1;
+  return wrapQ((boxYaw-a0)*s);
+}
+
+/* ---------------- parts ---------------- */
+const SHAPES={box:{h:0.05,w:0.05},cylinder:{h:0.06,w:0.05},sphere:{h:0.06,w:0.06}};
+let parts=[];
+function makePart(color,shape){
+  let geo; if(shape==='box')geo=new THREE.BoxGeometry(0.05,0.05,0.05); else if(shape==='cylinder')geo=new THREE.CylinderGeometry(0.025,0.025,0.06,40); else geo=new THREE.SphereGeometry(0.03,40,24);
+  const m=new THREE.Mesh(geo,std(COLORS[color],{roughness:.7,metalness:0}));m.castShadow=true;m.receiveShadow=true;
+  m.userData={color,shape,state:'table'}; scene.add(m); return m;
+}
+function rnd(a,b){return a+Math.random()*(b-a)}
+function scatter(){
+  parts.forEach(p=>scene.remove(p)); parts=[]; Object.keys(binCount).forEach(k=>binCount[k]=0);
+  const combos=[['red','box'],['blue','cylinder'],['green','sphere'],['yellow','box'],['red','sphere'],['green','box'],['blue','box'],['yellow','cylinder']];
+  const placed=[];
+  combos.forEach(([c,s])=>{
+    let p,tries=0;
+    do{p=new V3(rnd(0.12,0.56),0,rnd(-0.25,0.25));tries++}
+    while(tries<400&&(Math.hypot(p.x,p.z)<0.2||Math.hypot(p.x,p.z)>0.5||placed.some(o=>o.distanceTo(p)<0.1)));
+    placed.push(p); const m=makePart(c,s); m.position.set(p.x,SHAPES[s].h/2,p.z); m.rotation.y=rnd(0,PI); parts.push(m);
+  });
+  log('New layout: 8 parts on the table');
+}
+
+/* ---------------- vision ---------------- */
+const RES=256;
+const ocam=new THREE.OrthographicCamera(-0.3,0.3,0.3,-0.3,0.5,2.5);
+ocam.position.set(0.33,1.5,0); ocam.up.set(1,0,0); ocam.lookAt(0.33,0,0); ocam.updateMatrixWorld(); ocam.updateProjectionMatrix();
+const rt=new THREE.WebGLRenderTarget(RES,RES); rt.texture.encoding=THREE.sRGBEncoding;
+const buf=new Uint8Array(RES*RES*4);
+const feed=$('feed'), fctx=feed.getContext('2d'), img=fctx.createImageData(RES,RES);
+const off=document.createElement('canvas'); off.width=off.height=RES; const octx=off.getContext('2d');
+let noiseSigma=8, dets=[];
+function pixToWorld(px,py){const v=new V3((px+0.5)/RES*2-1,(py+0.5)/RES*2-1,0).unproject(ocam);return v}
+function gauss(){let u=0,v=0;while(!u)u=Math.random();while(!v)v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*PI*v)}
+function capture(){
+  renderer.setRenderTarget(rt); renderer.render(scene,ocam); renderer.setRenderTarget(null);
+  renderer.readRenderTargetPixels(rt,0,0,RES,RES,buf);
+  if(noiseSigma>0){for(let i=0;i<buf.length;i+=4){const n=noiseSigma;buf[i]=clamp(buf[i]+gauss()*n,0,255);buf[i+1]=clamp(buf[i+1]+gauss()*n,0,255);buf[i+2]=clamp(buf[i+2]+gauss()*n,0,255)}}
+}
+function classify(r,g,b){
+  const mx=Math.max(r,g,b), mn=Math.min(r,g,b), v=mx/255, s=mx?(mx-mn)/mx:0;
+  if(s<0.38||v<0.16) return 0;
+  let h; const d=mx-mn;
+  if(mx===r) h=((g-b)/d)%6; else if(mx===g) h=(b-r)/d+2; else h=(r-g)/d+4;
+  h*=60; if(h<0)h+=360;
+  if(h<18||h>335) return 1; if(h>=36&&h<=68) return 2; if(h>=95&&h<=165) return 3; if(h>=195&&h<=250) return 4; return 0;
+}
+const CLS=[null,'red','yellow','green','blue'];
+function detect(){
+  capture();
+  const N=RES*RES, cls=new Uint8Array(N), lab=new Int32Array(N).fill(-1), out=[];
+  for(let i=0;i<N;i++){const k=i*4;cls[i]=classify(buf[k],buf[k+1],buf[k+2])}
+  const stack=new Int32Array(N);
+  for(let i=0;i<N;i++){
+    if(!cls[i]||lab[i]>=0) continue;
+    const c=cls[i], id=out.length; let sp=0, n=0, sx=0, sy=0, sv=0, sv2=0, minx=1e9,miny=1e9,maxx=-1,maxy=-1; const px=[];
+    stack[sp++]=i; lab[i]=id;
+    while(sp){const j=stack[--sp], x=j%RES, y=(j/RES)|0; n++; sx+=x; sy+=y; px.push(j);
+      const k=j*4, v=Math.max(buf[k],buf[k+1],buf[k+2])/255; sv+=v; sv2+=v*v;
+      if(x<minx)minx=x; if(x>maxx)maxx=x; if(y<miny)miny=y; if(y>maxy)maxy=y;
+      const nb=[x>0?j-1:-1,x<RES-1?j+1:-1,y>0?j-RES:-1,y<RES-1?j+RES:-1];
+      for(const m of nb){if(m>=0&&lab[m]<0&&cls[m]===c){lab[m]=id;stack[sp++]=m}}
+    }
+    if(n<60){out.push(null);continue}
+    const cx=sx/n, cy=sy/n; let rmax=0, far=px[0];
+    for(const j of px){const dx=j%RES-cx, dy=((j/RES)|0)-cy, d=dx*dx+dy*dy; if(d>rmax){rmax=d;far=j}}
+    rmax=Math.sqrt(rmax)+0.5;
+    const fill=n/(PI*rmax*rmax), vmean=sv/n, vstd=Math.sqrt(Math.max(0,sv2/n-vmean*vmean));
+    const round=fill>0.8;
+    const shape=round?(vstd>0.06?'sphere':'cylinder'):'box';
+    const w=pixToWorld(cx,cy), fw=pixToWorld(far%RES,(far/RES)|0);
+    const yaw=shape==='box'?wrapQ(Math.atan2(-(fw.z-w.z),fw.x-w.x)-PI/4):0;
+    const conf=clamp(round?0.6+(fill-0.8)*2:0.6+(0.8-fill)*1.6,0.5,0.99)*clamp(n/300,0.5,1);
+    out.push({color:CLS[c],shape,x:w.x,z:w.z,yaw,conf,area:n,box:[minx,miny,maxx,maxy],cx,cy,fill,vstd});
+  }
+  dets=out.filter(Boolean).sort((a,b)=>a.x-b.x||a.z-b.z);
+  dets.forEach((d,i)=>{d.id=i+1;const t=nearestPart(d.x,d.z,0.06);d.truth=t;d.err=t?Math.hypot(t.position.x-d.x,t.position.z-d.z):null});
+  drawFeed(); renderDets();
+  $('detCount').textContent=dets.length+' detected';
+  return dets;
+}
+function nearestPart(x,z,maxD){let best=null,bd=maxD;parts.forEach(p=>{if(p.userData.state!=='table')return;const d=Math.hypot(p.position.x-x,p.position.z-z);if(d<bd){bd=d;best=p}});return best}
+let activeDet=null;
+function drawFeed(live){
+  if(live) capture();
+  for(let y=0;y<RES;y++){const src=(RES-1-y)*RES*4;img.data.set(buf.subarray(src,src+RES*4),y*RES*4)}
+  octx.putImageData(img,0,0);
+  const S=feed.width/RES; fctx.imageSmoothingEnabled=false; fctx.drawImage(off,0,0,feed.width,feed.height);
+  fctx.font='500 11px "IBM Plex Mono", monospace'; fctx.textBaseline='bottom';
+  dets.forEach(d=>{
+    const [x0,y0,x1,y1]=d.box, X=x0*S, Y=(RES-1-y1)*S, Wd=(x1-x0+1)*S, Hd=(y1-y0+1)*S;
+    const act=activeDet&&activeDet.id===d.id;
+    fctx.strokeStyle=act?'#ff5a1f':'#ffffff'; fctx.lineWidth=act?2.5:1.5; fctx.strokeRect(X,Y,Wd,Hd);
+    const cx=(d.cx+0.5)*S, cy=(RES-1-d.cy+0.5)*S; fctx.beginPath(); fctx.moveTo(cx-5,cy);fctx.lineTo(cx+5,cy);fctx.moveTo(cx,cy-5);fctx.lineTo(cx,cy+5); fctx.stroke();
+    const t=`#${d.id} ${d.shape} ${Math.round(d.conf*100)}%`, tw=fctx.measureText(t).width+8;
+    fctx.fillStyle=act?'#ff5a1f':'rgba(0,0,0,.7)'; fctx.fillRect(X,Y-15,tw,15); fctx.fillStyle='#fff'; fctx.fillText(t,X+4,Y-2);
+  });
+}
+function renderDets(){
+  $('dets').innerHTML=dets.map(d=>`<tr><td><span class="sw" style="background:${CSS[d.color]}"></span>${d.id}</td><td>${d.color} ${d.shape}</td><td>${Math.round(d.x*1000)}</td><td>${Math.round(-d.z*1000)}</td><td>${d.shape==='box'?Math.round(deg(d.yaw))+'°':'-'}</td><td>${Math.round(d.conf*100)}%</td><td>${d.err==null?'-':(d.err*1000).toFixed(1)}</td></tr>`).join('')||'<tr><td colspan="7" style="text-align:left;color:var(--muted)">No parts in view. Press New layout.</td></tr>';
+  const errs=dets.filter(d=>d.err!=null).map(d=>d.err*1000);
+  $('sErr').textContent=errs.length?(errs.reduce((a,b)=>a+b,0)/errs.length).toFixed(1)+' mm':'-';
+}
+
+/* ---------------- motion planner ---------------- */
+let speed=1, queue=[], cur=null, auto=false, stopReq=false, busy=false, held=null, falling=[];
+let picks=0, attempts=0, cycleStart=0;
+function maxDelta(a,b){return Math.max(Math.abs(wrapPi(b.yaw-a.yaw)),Math.abs(b.a1-a.a1),Math.abs(b.a2-a.a2),Math.abs(b.a3-a.a3),Math.abs(b.roll-a.roll))}
+function jointMove(target){return{type:'joint',target}}
+function line(from,to,roll){return{type:'line',from,to,roll}}
+function grip(w){return{type:'grip',w}}
+function call(fn){return{type:'call',fn}}
+function start(step){
+  step.t=0;
+  if(step.type==='joint'){step.from=Object.assign({},q);step.dur=(0.45+maxDelta(q,step.target)*0.6)/speed}
+  else if(step.type==='line'){step.dur=Math.max(0.35,step.from.distanceTo(step.to)/0.22)/speed}
+  else if(step.type==='grip'){step.from=q.grip;step.dur=0.35/speed}
+  else step.dur=0;
+}
+function stepUpdate(dt){
+  if(!cur){if(!queue.length)return; cur=queue.shift(); start(cur)}
+  cur.t+=dt; const u=cur.dur?clamp(cur.t/cur.dur,0,1):1, e=ease(u);
+  if(cur.type==='joint'){const a=cur.from,b=cur.target;q.yaw=a.yaw+wrapPi(b.yaw-a.yaw)*e;q.a1=a.a1+(b.a1-a.a1)*e;q.a2=a.a2+(b.a2-a.a2)*e;q.a3=a.a3+(b.a3-a.a3)*e;q.roll=a.roll+(b.roll-a.roll)*e}
+  else if(cur.type==='line'){const p=cur.from.clone().lerp(cur.to,e), s=ik(p,cur.roll); if(s)Object.assign(q,s)}
+  else if(cur.type==='grip'){q.grip=cur.from+(cur.w-cur.from)*e}
+  else if(cur.type==='call'){cur.fn()}
+  applyQ(q);
+  if(u>=1){cur=null}
+}
+
+function planPick(d){
+  if(busy) return;
+  busy=true; activeDet=d; attempts++; cycleStart=performance.now(); drawFeed(); setState('busy',`Picking #${d.id} ${d.color} ${d.shape}`);
+  const S=SHAPES[d.shape], gy=Math.max(0.022,S.h*0.5);
+  const above=new V3(d.x,S.h+0.11,d.z), at=new V3(d.x,gy,d.z);
+  const qa=ik(above,0); if(!qa){log(`#${d.id} is out of reach`,'bad');busy=false;activeDet=null;setState('idle','Ready');return}
+  const roll=d.shape==='box'?rollFor(qa,d.yaw):0; qa.roll=roll;
+  targetRing.position.set(d.x,0.002,d.z); targetRing.visible=true;
+  const bin=BINS[d.color], n=binCount[d.color]++;
+  const ang=Math.atan2(bin.z,bin.x), ofs=new V3(Math.cos(ang+PI/2),0,Math.sin(ang+PI/2)).multiplyScalar((n%2?1:-1)*0.034);
+  const stackY=Math.floor(n/2)*0.06;
+  const binAbove=new V3(bin.x+ofs.x,0.24,bin.z+ofs.z), binLow=new V3(bin.x+ofs.x,0.16,bin.z+ofs.z);
+  const qb=ik(binAbove,0);
+  log(`Target #${d.id}: X ${Math.round(d.x*1000)} Y ${Math.round(-d.z*1000)} mm${d.shape==='box'?`, roll ${Math.round(deg(roll))}°`:''}`);
+  queue.push(grip(0.09), jointMove(qa), line(above,at,roll), grip(S.w-0.004),
+    call(()=>{ // grasp check against the real part
+      const p=nearestPart(d.x,d.z,0.05);
+      let ok=false,why='nothing between the fingers';
+      if(p){const e=Math.hypot(p.position.x-d.x,p.position.z-d.z);
+        const yawErr=p.userData.shape==='box'?Math.abs(wrapQ(p.rotation.y-d.yaw)):0;
+        if(e>0.016) why=`offset ${(e*1000).toFixed(0)} mm`; else if(yawErr>0.26) why=`yaw off ${deg(yawErr).toFixed(0)}°`; else ok=true;}
+      if(ok){held=p;p.userData.state='held';rl.attach(p);log(`Grasped #${d.id}`,'ok')}
+      else{log(`Missed #${d.id}: ${why}`,'bad');queue.length=0;queue.push(grip(0.09),line(at,above,roll),jointMove(HOME),call(()=>finishCycle(false)))}
+    }),
+    line(at,above,roll), jointMove(qb), line(binAbove,binLow,0), grip(0.09),
+    call(()=>{if(held){scene.attach(held);held.userData.state='falling';falling.push({o:held,v:0,floor:0.008+stackY+SHAPES[held.userData.shape].h/2});held=null}}),
+    line(binLow,binAbove,0), jointMove(HOME), call(()=>finishCycle(true)));
+}
+function finishCycle(ok){
+  targetRing.visible=false; activeDet=null; busy=false;
+  if(ok){picks++;$('sCycle').textContent=((performance.now()-cycleStart)/1000).toFixed(1)+' s'}
+  $('sPicks').textContent=`${picks} / ${attempts}`;
+  detect();
+  if(auto&&!stopReq&&dets.length){setTimeout(()=>{if(auto&&!busy)planPick(dets[0])},250)}
+  else{if(auto&&!dets.length)log('Table clear','ok');auto=false;stopReq=false;$('bStop').disabled=true;$('bAuto').disabled=false;setState('idle',dets.length?'Ready':'Table clear')}
+}
+
+/* ---------------- UI ---------------- */
+const JN=[['Base yaw','yaw',PI],['Shoulder','a1',PI],['Elbow','a2',PI],['Wrist pitch','a3',PI],['Wrist roll','roll',PI/2]];
+$('joints').innerHTML=JN.map(([n,k])=>`<div class="jbar"><span>${n}</span><span class="track"><i id="j-${k}"></i></span><span id="v-${k}">0°</span></div>`).join('')+`<div class="jbar"><span>Gripper</span><span class="track"><i id="j-grip"></i></span><span id="v-grip">0 mm</span></div>`;
+const tp=new V3();
+function renderJoints(){
+  JN.forEach(([n,k,r])=>{const v=k==='yaw'?wrapPi(q[k]):q[k];$('j-'+k).style.left=(50+clamp(v/r,-1,1)*50)+'%';$('v-'+k).textContent=deg(v).toFixed(1)+'°'});
+  $('j-grip').style.left=(q.grip/0.09*100)+'%'; $('v-grip').textContent=(q.grip*1000).toFixed(0)+' mm';
+  tcp.getWorldPosition(tp); $('tool').textContent=`tool ${Math.round(tp.x*1000)}, ${Math.round(-tp.z*1000)}, ${Math.round(tp.y*1000)} mm`;
+}
+const t0=performance.now();
+function log(msg,cls){const li=document.createElement('li');li.innerHTML=`<time>${((performance.now()-t0)/1000).toFixed(1)}s</time><span class="${cls||''}"></span>`;li.lastChild.textContent=msg;const L=$('log');L.prepend(li);while(L.children.length>9)L.lastChild.remove()}
+function setState(kind,text){$('dot').className='dot'+(kind==='busy'?' busy':kind==='ok'?' ok':'');$('stateText').textContent=text}
+
+// click to pick in 3D
+const ray=new THREE.Raycaster(), mouse=new THREE.Vector2(); let downAt=null;
+renderer.domElement.addEventListener('pointerdown',e=>{downAt=[e.clientX,e.clientY]});
+renderer.domElement.addEventListener('pointerup',e=>{
+  if(!downAt||Math.hypot(e.clientX-downAt[0],e.clientY-downAt[1])>5)return;
+  const r=renderer.domElement.getBoundingClientRect(); mouse.set((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1);
+  ray.setFromCamera(mouse,cam); const hit=ray.intersectObjects(parts.filter(p=>p.userData.state==='table'))[0];
+  if(!hit)return; requestPick(hit.object);
+});
+// click a detection on the feed
+feed.addEventListener('click',e=>{const r=feed.getBoundingClientRect(),S=RES/r.width,px=(e.clientX-r.left)*S,py=RES-1-(e.clientY-r.top)*S;
+  const d=dets.find(d=>px>=d.box[0]-2&&px<=d.box[2]+2&&py>=d.box[1]-2&&py<=d.box[3]+2); if(d&&!busy)planPick(d)});
+function requestPick(part){
+  if(busy){log('Arm busy. Wait for the current cycle.');return}
+  detect();
+  const d=dets.find(d=>d.truth===part);
+  if(!d){log(`Camera cannot see the ${part.userData.color} ${part.userData.shape}`,'bad');return}
+  planPick(d);
+}
+$('bAuto').addEventListener('click',()=>{if(busy)return;detect();if(!dets.length){log('Nothing to sort');return}auto=true;stopReq=false;$('bAuto').disabled=true;$('bStop').disabled=false;log('Auto sort started');planPick(dets[0])});
+$('bStop').addEventListener('click',()=>{stopReq=true;$('bStop').disabled=true;log('Stopping after this pick')});
+$('bScan').addEventListener('click',()=>{if(busy)return;detect();log(`Scan: ${dets.length} parts found`)});
+$('bScatter').addEventListener('click',()=>{if(busy)return;falling=[];scatter();$('sPicks').textContent=`${picks} / ${attempts}`;setTimeout(()=>{detect();setState('idle','Ready')},60)});
+$('speed').addEventListener('input',e=>{speed=+e.target.value;$('oSpeed').textContent=speed.toFixed(1)+'×'});
+$('noise').addEventListener('input',e=>{noiseSigma=+e.target.value;$('oNoise').textContent=noiseSigma});
+$('noise').addEventListener('change',()=>{if(!busy)detect()});
+
+/* ---------------- loop ---------------- */
+function resize(){const w=view.clientWidth,h=view.clientHeight;renderer.setSize(w,h,false);cam.aspect=w/Math.max(1,h);cam.updateProjectionMatrix()}
+new ResizeObserver(resize).observe(view); resize();
+let last=performance.now(), frame=0;
+const reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+function loop(now){
+  const dt=Math.min(0.05,(now-last)/1000); last=now; frame++;
+  stepUpdate(reduce?dt*1.5:dt);
+  falling=falling.filter(f=>{f.v+=9.8*dt;f.o.position.y-=f.v*dt;if(f.o.position.y<=f.floor){f.o.position.y=f.floor;f.o.userData.state='binned';return false}return true});
+  controls.update(); renderer.render(scene,cam);
+  if(frame%3===0) renderJoints();
+  if(busy&&frame%6===0) drawFeed(true);
+  requestAnimationFrame(loop);
+}
+scatter(); renderer.render(scene,cam); detect(); renderJoints(); setState('idle','Ready'); log(`Scan: ${dets.length} parts found`);
+requestAnimationFrame(loop);
+window.__cell={detect,parts:()=>parts,dets:()=>dets,planPick,q,ik,rollFor,isBusy:()=>busy,stats:()=>({picks,attempts})};
+})();
+</script>
+
+</body>
+</html>
